@@ -1,13 +1,16 @@
+use std::collections::HashMap;
+
 use crate::commit::CommitMessage;
 
 /// Keep branch names short and readable (CLAUDE.md: "avoid unnecessarily long branch names").
 const MAX_SLUG_LEN: usize = 50;
 
-/// Default branch-name prefix for a Conventional Commit type (PRD section 11).
-///
-/// ponytail: hardcoded here; becomes configurable via `[branch.prefixes]` in `.ship.toml`
-/// once configuration support lands (PRD section 39, step 15).
-fn prefix(commit_type: &str) -> &'static str {
+/// Default branch-name prefix for a Conventional Commit type (PRD section 11), overridable
+/// via `[branch.prefixes]` in `.ship.toml`.
+fn prefix<'a>(commit_type: &str, overrides: &'a HashMap<String, String>) -> &'a str {
+    if let Some(custom) = overrides.get(commit_type) {
+        return custom;
+    }
     match commit_type {
         "feat" => "feature/",
         "fix" => "fix/",
@@ -39,8 +42,12 @@ fn slugify(subject: &str) -> String {
 }
 
 /// Suggests a branch name for a Conventional Commit message, without AI.
-pub fn suggest(commit: &CommitMessage) -> String {
-    format!("{}{}", prefix(commit.commit_type), slugify(&commit.subject))
+pub fn suggest(commit: &CommitMessage, prefix_overrides: &HashMap<String, String>) -> String {
+    format!(
+        "{}{}",
+        prefix(commit.commit_type, prefix_overrides),
+        slugify(&commit.subject)
+    )
 }
 
 #[cfg(test)]
@@ -55,20 +62,30 @@ mod tests {
         }
     }
 
+    fn no_overrides() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
     #[test]
     fn feat_gets_the_feature_prefix() {
-        assert_eq!(suggest(&commit("feat", "add login")), "feature/add-login");
+        assert_eq!(
+            suggest(&commit("feat", "add login"), &no_overrides()),
+            "feature/add-login"
+        );
     }
 
     #[test]
     fn fix_gets_the_fix_prefix() {
-        assert_eq!(suggest(&commit("fix", "update login")), "fix/update-login");
+        assert_eq!(
+            suggest(&commit("fix", "update login"), &no_overrides()),
+            "fix/update-login"
+        );
     }
 
     #[test]
     fn docs_gets_the_docs_prefix() {
         assert_eq!(
-            suggest(&commit("docs", "update documentation")),
+            suggest(&commit("docs", "update documentation"), &no_overrides()),
             "docs/update-documentation"
         );
     }
@@ -76,7 +93,10 @@ mod tests {
     #[test]
     fn refactor_gets_the_refactor_prefix() {
         assert_eq!(
-            suggest(&commit("refactor", "simplify request handling")),
+            suggest(
+                &commit("refactor", "simplify request handling"),
+                &no_overrides()
+            ),
             "refactor/simplify-request-handling"
         );
     }
@@ -85,10 +105,21 @@ mod tests {
     fn other_types_default_to_the_chore_prefix() {
         for commit_type in ["test", "build", "ci", "chore", "perf", "revert"] {
             assert_eq!(
-                suggest(&commit(commit_type, "update stuff")),
+                suggest(&commit(commit_type, "update stuff"), &no_overrides()),
                 "chore/update-stuff"
             );
         }
+    }
+
+    #[test]
+    fn a_configured_prefix_overrides_the_default() {
+        let mut overrides = HashMap::new();
+        overrides.insert("feat".to_string(), "f/".to_string());
+
+        assert_eq!(
+            suggest(&commit("feat", "add login"), &overrides),
+            "f/add-login"
+        );
     }
 
     #[test]

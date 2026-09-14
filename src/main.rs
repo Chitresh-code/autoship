@@ -1,6 +1,7 @@
 mod branch;
 mod bump;
 mod commit;
+mod config;
 mod confirm;
 mod git;
 mod plan;
@@ -28,12 +29,12 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The remote `ship` targets by default when the user isn't asked to choose: `origin` when
-/// present, otherwise the first configured remote.
-fn default_remote(remotes: &[(String, String)]) -> Option<&str> {
-    remotes
-        .iter()
-        .find(|(name, _)| name == "origin")
+/// The remote `ship` targets by default when the user isn't asked to choose: the configured
+/// preferred remote when it exists, else `origin`, else the first configured remote.
+fn default_remote<'a>(remotes: &'a [(String, String)], preferred: Option<&str>) -> Option<&'a str> {
+    preferred
+        .and_then(|preferred| remotes.iter().find(|(name, _)| name == preferred))
+        .or_else(|| remotes.iter().find(|(name, _)| name == "origin"))
         .or_else(|| remotes.first())
         .map(|(name, _)| name.as_str())
 }
@@ -75,6 +76,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
     }
 
     let repo_root = git::repository_root()?;
+    let config = config::load(&repo_root)?;
     let detected_version = version::detect(&repo_root)?;
     if let Some(v) = &detected_version {
         println!("✓ {} project detected", v.ecosystem);
@@ -94,7 +96,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
         Some((v.version.clone(), change.apply(&current).to_string()))
     });
     let suggested_commit = commit::suggest(&staged, &classification);
-    let suggested_branch = branch::suggest(&suggested_commit);
+    let suggested_branch = branch::suggest(&suggested_commit, &config.branch_prefixes);
 
     if dry_run {
         println!();
@@ -106,7 +108,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
                     .map(|(c, s)| (c.as_str(), s.as_str())),
                 (branch.as_str(), suggested_branch.as_str()),
                 &suggested_commit.to_string(),
-                default_remote(&remotes),
+                default_remote(&remotes, config.remote.as_deref()),
             )
         );
         return Ok(());
