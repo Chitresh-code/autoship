@@ -10,7 +10,7 @@ pub fn render(
     commit: &str,
     remote: Option<&str>,
 ) -> String {
-    let mut out = String::from("Ship Plan\n");
+    let mut out = String::from("Autoship Plan\n");
     let (current_branch, suggested_branch) = branch;
 
     if let Some((current, suggested)) = version {
@@ -47,7 +47,7 @@ mod tests {
 
         assert_eq!(
             text,
-            "Ship Plan\n\
+            "Autoship Plan\n\
              \n\
              Version:\n  1.8.2 \u{2192} 1.9.0\n\
              \n\
@@ -69,7 +69,7 @@ mod tests {
 
         assert_eq!(
             text,
-            "Ship Plan\n\
+            "Autoship Plan\n\
              \n\
              Branch:\n  main \u{2192} fix/thing\n\
              \n\

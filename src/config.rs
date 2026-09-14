@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// Resolved Ship configuration, merged from global and project `.ship.toml` files.
+/// Resolved Autoship configuration, merged from global and project `.autoship.toml` files.
 ///
 /// Only options with a concrete use case exist here (CLAUDE.md: "avoid speculative
 /// configuration"): branch prefixes (`branch::prefix`) and a preferred remote
@@ -19,7 +19,7 @@ pub struct Config {
 }
 
 fn parse(contents: &str) -> Result<Config> {
-    let value: toml::Value = toml::from_str(contents).context("invalid .ship.toml")?;
+    let value: toml::Value = toml::from_str(contents).context("invalid .autoship.toml")?;
     let branch_prefixes = value
         .get("branch")
         .and_then(|b| b.get("prefixes"))
@@ -65,28 +65,29 @@ fn merge(global: Config, project: Option<Config>) -> Config {
     merged
 }
 
-/// The platform-appropriate user configuration directory for Ship's global config file.
+/// The platform-appropriate user configuration directory for Autoship's global config file.
 fn global_config_path() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
-        env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join("Library/Application Support/ship/config.toml"))
+        env::var_os("HOME").map(|home| {
+            PathBuf::from(home).join("Library/Application Support/autoship/config.toml")
+        })
     } else if cfg!(target_os = "windows") {
-        env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("ship/config.toml"))
+        env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("autoship/config.toml"))
     } else {
         env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .map(|dir| dir.join("ship/config.toml"))
+            .map(|dir| dir.join("autoship/config.toml"))
     }
 }
 
-/// Loads and merges global and project (`<repo_root>/.ship.toml`) configuration.
+/// Loads and merges global and project (`<repo_root>/.autoship.toml`) configuration.
 pub fn load(repo_root: &Path) -> Result<Config> {
     let global = match global_config_path() {
         Some(path) => read(&path)?,
         None => None,
     };
-    let project = read(&repo_root.join(".ship.toml"))?;
+    let project = read(&repo_root.join(".autoship.toml"))?;
     Ok(merge(global.unwrap_or_default(), project))
 }
 
@@ -135,9 +136,9 @@ mod tests {
     }
 
     #[test]
-    fn load_reads_project_ship_toml_from_the_repo_root() {
+    fn load_reads_project_autoship_toml_from_the_repo_root() {
         let dir = std::env::temp_dir().join(format!(
-            "ship-config-test-{}",
+            "autoship-config-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -145,7 +146,7 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            dir.join(".ship.toml"),
+            dir.join(".autoship.toml"),
             "[branch.prefixes]\nfeat = \"f/\"\n\n[git]\nremote = \"upstream\"\n",
         )
         .unwrap();

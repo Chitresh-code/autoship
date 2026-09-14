@@ -153,7 +153,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("ship-version-test-{nanos}-{n}"));
+        let dir = std::env::temp_dir().join(format!("autoship-version-test-{nanos}-{n}"));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

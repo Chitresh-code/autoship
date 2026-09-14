@@ -6,7 +6,7 @@ use crate::commit::CommitMessage;
 const MAX_SLUG_LEN: usize = 50;
 
 /// Default branch-name prefix for a Conventional Commit type (PRD section 11), overridable
-/// via `[branch.prefixes]` in `.ship.toml`.
+/// via `[branch.prefixes]` in `.autoship.toml`.
 fn prefix<'a>(commit_type: &str, overrides: &'a HashMap<String, String>) -> &'a str {
     if let Some(custom) = overrides.get(commit_type) {
         return custom;

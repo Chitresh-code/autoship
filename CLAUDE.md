@@ -4,9 +4,9 @@ Instructions for Claude and any contributor working in this repository.
 
 ## Project
 
-Ship is a Rust-based CLI that automates the workflow between staged Git changes and pushed code.
+Autoship is a Rust-based CLI that automates the workflow between staged Git changes and pushed code.
 
-Ship should make common Git shipping workflows fast, predictable, and safe.
+Autoship should make common Git shipping workflows fast, predictable, and safe.
 
 The CLI should remain useful without AI. AI provides recommendations and additional intelligence, but the core Git workflow must remain deterministic.
 
@@ -56,7 +56,7 @@ Never push changes.
 
 Never create or delete branches unless the user explicitly asks Claude to perform that Git operation.
 
-Claude is developing Ship, not operating Ship on behalf of the user.
+Claude is developing Autoship, not operating Autoship on behalf of the user.
 
 When testing Git functionality, use temporary repositories created specifically for tests.
 
@@ -83,7 +83,7 @@ At minimum, inspect:
 
 Never use `git add -A` or `git add .` internally to collect changes.
 
-Ship operates on changes the user already staged.
+Autoship operates on changes the user already staged.
 
 Never accidentally include unstaged changes.
 
@@ -165,7 +165,7 @@ Use SemVer where the project uses SemVer.
 
 ## Commit messages
 
-Prefer Conventional Commits when the repository uses them or when Ship is configured to use them.
+Prefer Conventional Commits when the repository uses them or when Autoship is configured to use them.
 
 Examples:
 
@@ -223,7 +223,7 @@ Inspect configured remotes before pushing.
 
 Do not assume the remote is named `origin`.
 
-If multiple remotes exist, preserve enough information for Ship to make a safe recommendation.
+If multiple remotes exist, preserve enough information for Autoship to make a safe recommendation.
 
 Never expose credentials or authentication tokens.
 
@@ -249,7 +249,7 @@ AI should recommend structured information such as:
 
 Never execute arbitrary shell commands returned by an AI model.
 
-AI output must pass schema validation and domain validation before Ship uses it.
+AI output must pass schema validation and domain validation before Autoship uses it.
 
 AI suggestions are not authoritative.
 
@@ -272,7 +272,7 @@ Provide detailed diagnostics through verbose mode.
 Errors should explain:
 
 1. What failed.
-2. What Ship already changed.
+2. What Autoship already changed.
 3. What remains.
 4. What the user should do next.
 
@@ -285,7 +285,7 @@ Support a non-interactive mode for automation.
 Example:
 
 ```bash
-ship --yes
+autoship --yes
 ```
 
 Interactive prompts must not be required in non-interactive mode.
@@ -297,7 +297,7 @@ When required information is missing in non-interactive mode, fail clearly rathe
 Support:
 
 ```bash
-ship --dry-run
+autoship --dry-run
 ```
 
 Dry run should show the proposed workflow without modifying:
@@ -313,7 +313,7 @@ Dry run should show the proposed workflow without modifying:
 Project configuration lives in:
 
 ```text
-.ship.toml
+.autoship.toml
 ```
 
 Global configuration should live in the platform-appropriate user configuration directory.
@@ -363,7 +363,7 @@ Prefer unit tests for pure logic such as:
 
 ## Cross-platform support
 
-Ship is a native CLI.
+Autoship is a native CLI.
 
 Code should support:
 
@@ -439,7 +439,7 @@ Important architectural decisions belong in `docs/`.
 
 The README should focus on:
 
-* What Ship does
+* What Autoship does
 * Installation
 * Quick start
 * Example workflow

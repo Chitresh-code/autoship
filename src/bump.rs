@@ -6,7 +6,7 @@ use crate::git::{FileStatus, StagedFile};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bump {
     // ponytail: never suggested by `classify` (breaking-change detection needs semantic
-    // understanding this heuristic doesn't have); reserved for the manual `ship --version
+    // understanding this heuristic doesn't have); reserved for the manual `autoship --version
     // major` override, added when the CLI flag is wired up.
     #[allow(dead_code)]
     Major,
@@ -15,7 +15,7 @@ pub enum Bump {
 }
 
 impl Bump {
-    /// The label shown to the user, matching the CLI's `ship --version <label>` flag.
+    /// The label shown to the user, matching the CLI's `autoship --version <label>` flag.
     pub fn label(self) -> &'static str {
         match self {
             Bump::Major => "major",
@@ -94,7 +94,7 @@ fn is_chore(path: &str) -> bool {
 ///
 /// This is deliberately conservative: it never suggests a major bump, since detecting
 /// breaking changes requires semantic understanding this heuristic doesn't have. Major
-/// bumps remain a manual choice (`ship --version major`).
+/// bumps remain a manual choice (`autoship --version major`).
 pub fn classify(files: &[StagedFile]) -> Classification {
     if !files.is_empty() && files.iter().all(|f| is_docs(&f.path)) {
         return Classification {

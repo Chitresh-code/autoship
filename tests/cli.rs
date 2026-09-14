@@ -1,4 +1,4 @@
-//! End-to-end tests that run the actual `ship` binary against disposable Git repositories
+//! End-to-end tests that run the actual `autoship` binary against disposable Git repositories
 //! (never the developer's own repository), per CLAUDE.md's Git safety and testing rules.
 
 use std::fs;
@@ -21,7 +21,7 @@ impl TestRepo {
             .unwrap()
             .as_nanos();
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("ship-cli-test-{nanos}-{n}"));
+        let dir = std::env::temp_dir().join(format!("autoship-cli-test-{nanos}-{n}"));
         fs::create_dir_all(&dir).unwrap();
         assert!(
             StdCommand::new("git")
@@ -62,8 +62,8 @@ impl TestRepo {
         self.git(&["commit", "-q", "-m", "initial"]);
     }
 
-    fn ship(&self) -> Command {
-        let mut cmd = Command::cargo_bin("ship").unwrap();
+    fn autoship(&self) -> Command {
+        let mut cmd = Command::cargo_bin("autoship").unwrap();
         cmd.current_dir(&self.dir);
         cmd
     }
@@ -77,7 +77,7 @@ impl Drop for TestRepo {
 
 fn bare_remote() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "ship-cli-test-remote-{}",
+        "autoship-cli-test-remote-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -100,7 +100,7 @@ fn no_staged_changes_reports_nothing_to_ship() {
     let repo = TestRepo::new();
     repo.commit_initial_file();
 
-    let output = repo.ship().output().unwrap();
+    let output = repo.autoship().output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -114,11 +114,11 @@ fn dry_run_shows_the_plan_without_mutating_the_repository() {
     repo.write("new.txt", "content\n");
     repo.git(&["add", "new.txt"]);
 
-    let output = repo.ship().arg("--dry-run").output().unwrap();
+    let output = repo.autoship().arg("--dry-run").output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Ship Plan"));
+    assert!(stdout.contains("Autoship Plan"));
     assert!(stdout.contains("Branch:"));
     assert!(stdout.contains("Commit:"));
     assert!(stdout.contains("No changes were made."));
@@ -150,7 +150,7 @@ fn full_workflow_creates_a_branch_commits_and_pushes_with_upstream() {
     // Accept commit message, choose the suggested (new) branch, create it, commit, use the
     // single remote, and push.
     let output = repo
-        .ship()
+        .autoship()
         .write_stdin("y\n2\ny\ny\ny\ny\n")
         .output()
         .unwrap();
@@ -173,7 +173,7 @@ fn missing_remote_is_reported_clearly() {
     repo.git(&["add", "new.txt"]);
 
     // Accept commit message, stay on the current branch, commit.
-    let output = repo.ship().write_stdin("y\n1\ny\n").output().unwrap();
+    let output = repo.autoship().write_stdin("y\n1\ny\n").output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
@@ -195,7 +195,11 @@ fn multiple_remotes_prompt_with_a_numbered_list() {
     ]);
 
     // Accept commit message, stay on the current branch, commit, pick remote 1, decline push.
-    let output = repo.ship().write_stdin("y\n1\ny\n1\nn\n").output().unwrap();
+    let output = repo
+        .autoship()
+        .write_stdin("y\n1\ny\n1\nn\n")
+        .output()
+        .unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
@@ -215,7 +219,7 @@ fn invalid_version_file_is_reported_without_crashing() {
     repo.git(&["add", "VERSION", "new.txt"]);
 
     // Accept commit message, stay on the current branch, decline commit.
-    let output = repo.ship().write_stdin("y\n1\nn\n").output().unwrap();
+    let output = repo.autoship().write_stdin("y\n1\nn\n").output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
@@ -238,7 +242,11 @@ fn push_failure_is_reported_as_an_error() {
     ]);
 
     // Accept commit message, stay on the current branch, commit, use origin, push.
-    let output = repo.ship().write_stdin("y\n1\ny\ny\ny\n").output().unwrap();
+    let output = repo
+        .autoship()
+        .write_stdin("y\n1\ny\ny\ny\n")
+        .output()
+        .unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);

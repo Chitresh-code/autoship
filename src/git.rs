@@ -202,7 +202,7 @@ mod tests {
                 .unwrap()
                 .as_nanos();
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("ship-git-test-{nanos}-{n}"));
+            let dir = std::env::temp_dir().join(format!("autoship-git-test-{nanos}-{n}"));
             fs::create_dir_all(&dir).unwrap();
             let status = Command::new("git")
                 .args(["init", "-q"])
@@ -293,7 +293,7 @@ mod tests {
     fn reports_no_repository_outside_git() {
         let _guard = TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!(
-            "ship-not-a-repo-{}",
+            "autoship-not-a-repo-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -384,7 +384,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         let repo = TempRepo::new();
         let remote_dir = std::env::temp_dir().join(format!(
-            "ship-git-test-remote-{}",
+            "autoship-git-test-remote-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()

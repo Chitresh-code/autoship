@@ -11,7 +11,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-/// Ship: automate the workflow from staged changes to pushed code.
+/// Autoship: automate the workflow from staged changes to pushed code.
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The remote `ship` targets by default when the user isn't asked to choose: the configured
+/// The remote `autoship` targets by default when the user isn't asked to choose: the configured
 /// preferred remote when it exists, else `origin`, else the first configured remote.
 fn default_remote<'a>(remotes: &'a [(String, String)], preferred: Option<&str>) -> Option<&'a str> {
     preferred
@@ -61,7 +61,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
         println!();
         println!("Then run:");
         println!();
-        println!("  ship");
+        println!("  autoship");
         return Ok(());
     }
     println!(
