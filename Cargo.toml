@@ -1,0 +1,11 @@
+[package]
+name = "ship"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+semver = "1.0.28"
+serde_json = "1.0.151"
+toml = "1.1.6"
