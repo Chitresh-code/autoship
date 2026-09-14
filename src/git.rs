@@ -436,4 +436,34 @@ mod tests {
             )]
         );
     }
+
+    #[test]
+    fn parses_multiple_remotes_in_order() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let repo = TempRepo::new();
+        let _dir = repo.enter();
+        repo.git(&["remote", "add", "origin", "git@example.com:user/repo.git"]);
+        repo.git(&[
+            "remote",
+            "add",
+            "upstream",
+            "git@example.com:company/repo.git",
+        ]);
+
+        let remotes = remotes().unwrap();
+
+        assert_eq!(
+            remotes,
+            vec![
+                (
+                    "origin".to_string(),
+                    "git@example.com:user/repo.git".to_string()
+                ),
+                (
+                    "upstream".to_string(),
+                    "git@example.com:company/repo.git".to_string()
+                ),
+            ]
+        );
+    }
 }

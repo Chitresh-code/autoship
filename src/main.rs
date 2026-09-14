@@ -140,7 +140,9 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
                     classification.kind.label()
                 );
             }
-            (Some(_), Err(_)) => {}
+            (Some(_), Err(_)) => {
+                println!("Suggested version: none (unrecognized version format, skipping)");
+            }
         }
     }
 
