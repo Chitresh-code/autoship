@@ -108,6 +108,68 @@ fn replace_json_top_level_string(contents: &str, key: &str, new_value: &str) -> 
     None
 }
 
+/// Replaces the `version` field inside the `[[package]]` block whose `name` matches
+/// `package_name`, leaving every other byte of `Cargo.lock` untouched. Returns `None` if no
+/// such block (or no version field inside it) is found. Relies on Cargo's own stable ordering
+/// of `name` before `version` within a block.
+fn replace_cargo_lock_package_version(
+    contents: &str,
+    package_name: &str,
+    new_version: &str,
+) -> Option<String> {
+    let mut out = String::with_capacity(contents.len());
+    let mut current_name: Option<&str> = None;
+    let mut replaced = false;
+    for line in contents.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let trimmed = body.trim();
+        if trimmed == "[[package]]" {
+            current_name = None;
+        } else if !replaced {
+            if let Some(name) = trimmed
+                .strip_prefix("name = \"")
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                current_name = Some(name);
+            } else if current_name == Some(package_name)
+                && trimmed.strip_prefix("version = \"").is_some()
+            {
+                let indent = &body[..body.len() - body.trim_start().len()];
+                let ending = &line[body.len()..];
+                out.push_str(indent);
+                out.push_str("version = \"");
+                out.push_str(new_version);
+                out.push('"');
+                out.push_str(ending);
+                replaced = true;
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    replaced.then_some(out)
+}
+
+/// After a Cargo.toml version bump, Cargo's own lockfile must carry the same version in the
+/// crate's `[[package]]` entry (Cargo rewrites it automatically on the next build otherwise,
+/// which is exactly the kind of package-manager-required lockfile update CLAUDE.md allows).
+/// Leaving it out of sync means a CI `cargo publish`/`cargo check` step finds an unexpectedly
+/// dirty `Cargo.lock` right when it runs. No-ops if there's no lockfile or no matching entry.
+fn sync_cargo_lock(repo_root: &Path, package_name: &str, new_version: &str) -> Result<()> {
+    let lock_path = repo_root.join("Cargo.lock");
+    if !lock_path.is_file() {
+        return Ok(());
+    }
+    let contents = fs::read_to_string(&lock_path)
+        .with_context(|| format!("failed to read {}", lock_path.display()))?;
+    if let Some(updated) = replace_cargo_lock_package_version(&contents, package_name, new_version)
+    {
+        fs::write(&lock_path, updated)
+            .with_context(|| format!("failed to write {}", lock_path.display()))?;
+    }
+    Ok(())
+}
+
 struct NodeProvider;
 
 impl VersionProvider for NodeProvider {
@@ -275,8 +337,25 @@ pub fn apply(detected: &DetectedVersion, new_version: &str) -> Result<()> {
     let contents = fs::read_to_string(&detected.file)
         .with_context(|| format!("failed to read {}", detected.file.display()))?;
     let updated = provider.write(&contents, &detected.version, new_version)?;
-    fs::write(&detected.file, updated)
-        .with_context(|| format!("failed to write {}", detected.file.display()))
+    fs::write(&detected.file, &updated)
+        .with_context(|| format!("failed to write {}", detected.file.display()))?;
+
+    if file_name == "Cargo.toml" {
+        let repo_root = detected
+            .file
+            .parent()
+            .with_context(|| format!("invalid version file path: {}", detected.file.display()))?;
+        let value: toml::Value = toml::from_str(&updated).context("invalid Cargo.toml")?;
+        if let Some(name) = value
+            .get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|v| v.as_str())
+        {
+            sync_cargo_lock(repo_root, name, new_version)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -452,6 +531,31 @@ mod tests {
         assert_eq!(
             contents,
             "{\n  \"name\": \"x\",\n  \"version\": \"1.3.0\",\n  \"dependencies\": {\n    \"y\": \"version\"\n  }\n}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_syncs_the_matching_cargo_lock_entry() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.4.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("Cargo.lock"),
+            "[[package]]\nname = \"other\"\nversion = \"1.0.0\"\n\n[[package]]\nname = \"x\"\nversion = \"0.4.0\"\n",
+        )
+        .unwrap();
+        let detected = detect(&dir).unwrap().unwrap();
+
+        apply(&detected, "0.5.0").unwrap();
+
+        let lock = fs::read_to_string(dir.join("Cargo.lock")).unwrap();
+        assert_eq!(
+            lock,
+            "[[package]]\nname = \"other\"\nversion = \"1.0.0\"\n\n[[package]]\nname = \"x\"\nversion = \"0.5.0\"\n"
         );
         fs::remove_dir_all(&dir).unwrap();
     }
