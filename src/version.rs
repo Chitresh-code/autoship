@@ -15,6 +15,97 @@ trait VersionProvider {
     fn file_name(&self) -> &'static str;
     fn ecosystem(&self) -> &'static str;
     fn extract(&self, contents: &str) -> Result<Option<String>>;
+
+    /// Returns `contents` with `current` replaced by `new_version`, preserving everything
+    /// else in the file (formatting, comments, key order) exactly as-is.
+    fn write(&self, contents: &str, current: &str, new_version: &str) -> Result<String>;
+}
+
+/// Replaces `key = "old"` inside a specific top-level TOML table (dotted for nested tables,
+/// e.g. `tool.poetry`), leaving every other byte of the file untouched. Returns `None` if the
+/// table or key isn't found.
+fn replace_toml_string_in_table(
+    contents: &str,
+    table: &str,
+    key: &str,
+    new_value: &str,
+) -> Option<String> {
+    let mut out = String::with_capacity(contents.len() + 8);
+    let mut in_table = false;
+    let mut replaced = false;
+    for line in contents.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let trimmed = body.trim();
+        if !replaced {
+            if let Some(name) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                in_table = name.trim() == table;
+                out.push_str(line);
+                continue;
+            }
+            if in_table
+                && let Some(eq) = trimmed.find('=')
+                && trimmed[..eq].trim() == key
+            {
+                let indent = &body[..body.len() - body.trim_start().len()];
+                let ending = &line[body.len()..];
+                out.push_str(indent);
+                out.push_str(key);
+                out.push_str(" = \"");
+                out.push_str(new_value);
+                out.push('"');
+                out.push_str(ending);
+                replaced = true;
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    replaced.then_some(out)
+}
+
+/// Replaces a `"key": "old"` pair that sits directly in the JSON document's top-level object
+/// (not nested inside an array or another object, e.g. a dependency entry), leaving every
+/// other byte untouched. Returns `None` if no such top-level key is found.
+fn replace_json_top_level_string(contents: &str, key: &str, new_value: &str) -> Option<String> {
+    let quoted_key = format!("\"{key}\"");
+    let bytes = contents.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if in_string {
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' if depth == 1 && contents[i..].starts_with(&quoted_key) => {
+                let after_key = i + quoted_key.len();
+                let colon = contents[after_key..].find(':')? + after_key + 1;
+                let value_start = contents[colon..].find('"')? + colon + 1;
+                let value_end = value_start + contents[value_start..].find('"')?;
+                let mut out = String::with_capacity(contents.len());
+                out.push_str(&contents[..value_start]);
+                out.push_str(new_value);
+                out.push_str(&contents[value_end..]);
+                return Some(out);
+            }
+            '"' => in_string = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 struct NodeProvider;
@@ -36,6 +127,11 @@ impl VersionProvider for NodeProvider {
             .and_then(|v| v.as_str())
             .map(str::to_string))
     }
+
+    fn write(&self, contents: &str, _current: &str, new_version: &str) -> Result<String> {
+        replace_json_top_level_string(contents, "version", new_version)
+            .context("could not find a top-level \"version\" field to update in package.json")
+    }
 }
 
 struct CargoProvider;
@@ -56,6 +152,11 @@ impl VersionProvider for CargoProvider {
             .and_then(|p| p.get("version"))
             .and_then(|v| v.as_str())
             .map(str::to_string))
+    }
+
+    fn write(&self, contents: &str, _current: &str, new_version: &str) -> Result<String> {
+        replace_toml_string_in_table(contents, "package", "version", new_version)
+            .context("could not find [package] version to update in Cargo.toml")
     }
 }
 
@@ -83,6 +184,15 @@ impl VersionProvider for PyProjectProvider {
             .and_then(|v| v.as_str());
         Ok(project_version.or(poetry_version).map(str::to_string))
     }
+
+    fn write(&self, contents: &str, _current: &str, new_version: &str) -> Result<String> {
+        // Mirrors `extract`'s priority: prefer [project], fall back to [tool.poetry].
+        replace_toml_string_in_table(contents, "project", "version", new_version)
+            .or_else(|| {
+                replace_toml_string_in_table(contents, "tool.poetry", "version", new_version)
+            })
+            .context("could not find a version field to update in pyproject.toml")
+    }
 }
 
 struct PlainFileProvider {
@@ -105,6 +215,15 @@ impl VersionProvider for PlainFileProvider {
         } else {
             Some(trimmed.to_string())
         })
+    }
+
+    fn write(&self, contents: &str, current: &str, new_version: &str) -> Result<String> {
+        let pos = contents
+            .find(current)
+            .with_context(|| format!("could not find version '{current}' in {}", self.file))?;
+        let mut updated = contents.to_string();
+        updated.replace_range(pos..pos + current.len(), new_version);
+        Ok(updated)
     }
 }
 
@@ -138,6 +257,26 @@ pub fn detect(repo_root: &Path) -> Result<Option<DetectedVersion>> {
         }
     }
     Ok(None)
+}
+
+/// Writes `new_version` into the file `detected` was read from, preserving its existing
+/// structure and formatting as much as practical (per CLAUDE.md's version management rules).
+pub fn apply(detected: &DetectedVersion, new_version: &str) -> Result<()> {
+    let file_name = detected
+        .file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("invalid version file path: {}", detected.file.display()))?;
+    let provider = providers()
+        .into_iter()
+        .find(|p| p.file_name() == file_name)
+        .with_context(|| format!("no version provider for {file_name}"))?;
+
+    let contents = fs::read_to_string(&detected.file)
+        .with_context(|| format!("failed to read {}", detected.file.display()))?;
+    let updated = provider.write(&contents, &detected.version, new_version)?;
+    fs::write(&detected.file, updated)
+        .with_context(|| format!("failed to write {}", detected.file.display()))
 }
 
 #[cfg(test)]
@@ -237,6 +376,96 @@ mod tests {
         let detected = detect(&dir).unwrap().unwrap();
 
         assert_eq!(detected.ecosystem, "Node.js");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_updates_cargo_toml_in_place_preserving_other_lines() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.4.0\"\nedition = \"2024\"\n\n[dependencies]\nversion = \"9.9.9\"\n",
+        )
+        .unwrap();
+        let detected = detect(&dir).unwrap().unwrap();
+
+        apply(&detected, "0.5.0").unwrap();
+
+        let contents = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        assert_eq!(
+            contents,
+            "[package]\nname = \"x\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[dependencies]\nversion = \"9.9.9\"\n"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_updates_pyproject_project_table() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("pyproject.toml"),
+            "[project]\nname = \"x\"\nversion = \"2.0.0\"\n",
+        )
+        .unwrap();
+        let detected = detect(&dir).unwrap().unwrap();
+
+        apply(&detected, "3.0.0").unwrap();
+
+        let contents = fs::read_to_string(dir.join("pyproject.toml")).unwrap();
+        assert_eq!(contents, "[project]\nname = \"x\"\nversion = \"3.0.0\"\n");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_updates_pyproject_poetry_table_when_no_project_version() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("pyproject.toml"),
+            "[tool.poetry]\nname = \"x\"\nversion = \"2.0.0\"\n",
+        )
+        .unwrap();
+        let detected = detect(&dir).unwrap().unwrap();
+
+        apply(&detected, "3.0.0").unwrap();
+
+        let contents = fs::read_to_string(dir.join("pyproject.toml")).unwrap();
+        assert_eq!(
+            contents,
+            "[tool.poetry]\nname = \"x\"\nversion = \"3.0.0\"\n"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_updates_only_the_top_level_version_in_package_json() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("package.json"),
+            "{\n  \"name\": \"x\",\n  \"version\": \"1.2.3\",\n  \"dependencies\": {\n    \"y\": \"version\"\n  }\n}",
+        )
+        .unwrap();
+        let detected = detect(&dir).unwrap().unwrap();
+
+        apply(&detected, "1.3.0").unwrap();
+
+        let contents = fs::read_to_string(dir.join("package.json")).unwrap();
+        assert_eq!(
+            contents,
+            "{\n  \"name\": \"x\",\n  \"version\": \"1.3.0\",\n  \"dependencies\": {\n    \"y\": \"version\"\n  }\n}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_updates_plain_version_files() {
+        let dir = temp_dir();
+        fs::write(dir.join("VERSION"), "5.6.7\n").unwrap();
+        let detected = detect(&dir).unwrap().unwrap();
+
+        apply(&detected, "5.7.0").unwrap();
+
+        let contents = fs::read_to_string(dir.join("VERSION")).unwrap();
+        assert_eq!(contents, "5.7.0\n");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

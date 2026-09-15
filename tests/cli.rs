@@ -203,6 +203,27 @@ fn multiple_remotes_default_to_the_configured_preference_without_prompting() {
 }
 
 #[test]
+fn accepting_a_version_bump_writes_it_to_the_project_file() {
+    let repo = TestRepo::new();
+    repo.commit_initial_file();
+    repo.write("VERSION", "1.0.0\n");
+    repo.git(&["add", "VERSION"]);
+    repo.git(&["commit", "-q", "-m", "add version file"]);
+    repo.write("new.txt", "content\n");
+    repo.git(&["add", "new.txt"]);
+
+    let output = repo.autoship().arg("--yes").output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout was:\n{stdout}");
+    assert!(stdout.contains("Suggested version: 1.1.0"));
+    assert!(stdout.contains("✓ Version updated to 1.1.0"));
+
+    let contents = fs::read_to_string(repo.dir.join("VERSION")).unwrap();
+    assert_eq!(contents.trim(), "1.1.0");
+}
+
+#[test]
 fn invalid_version_file_is_reported_without_crashing() {
     let repo = TestRepo::new();
     repo.commit_initial_file();

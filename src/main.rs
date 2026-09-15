@@ -152,10 +152,15 @@ fn run(dry_run: bool, yes: bool) -> anyhow::Result<()> {
                 println!();
                 match confirm::confirm_version(&suggested, yes)? {
                     confirm::VersionChoice::Accept => {
-                        println!("Version confirmed: {suggested}");
+                        version::apply(v, &suggested.to_string())?;
+                        println!(
+                            "{}",
+                            ui::success(&format!("Version updated to {suggested}"))
+                        );
                     }
                     confirm::VersionChoice::Custom(custom) => {
-                        println!("Version set to: {custom}");
+                        version::apply(v, &custom.to_string())?;
+                        println!("{}", ui::success(&format!("Version updated to {custom}")));
                     }
                     confirm::VersionChoice::Skip => {
                         println!("{}", ui::dim("Versioning skipped."));
