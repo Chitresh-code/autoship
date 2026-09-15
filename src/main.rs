@@ -5,25 +5,39 @@ mod config;
 mod confirm;
 mod git;
 mod plan;
+mod ui;
 mod version;
 
 use std::process::ExitCode;
 
 use clap::Parser;
+use clap::builder::styling::{AnsiColor, Styles};
+
+fn styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Cyan.on_default().bold())
+        .usage(AnsiColor::Cyan.on_default().bold())
+        .literal(AnsiColor::Green.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default())
+}
 
 /// Autoship: automate the workflow from staged changes to pushed code.
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, styles = styles())]
 struct Cli {
     /// Show the planned actions without changing files, branches, commits, or remote state.
     #[arg(long)]
     dry_run: bool,
+
+    /// Accept the generated plan without interactive confirmation, for automation.
+    #[arg(long)]
+    yes: bool,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if let Err(err) = run(cli.dry_run) {
-        eprintln!("Error: {err:#}");
+    if let Err(err) = run(cli.dry_run, cli.yes) {
+        eprintln!("{}", ui::error(&format!("Error: {err:#}")));
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
@@ -39,14 +53,14 @@ fn default_remote<'a>(remotes: &'a [(String, String)], preferred: Option<&str>) 
         .map(|(name, _)| name.as_str())
 }
 
-fn run(dry_run: bool) -> anyhow::Result<()> {
+fn run(dry_run: bool, yes: bool) -> anyhow::Result<()> {
     if !git::is_repository() {
         println!("Not a Git repository.");
         return Ok(());
     }
-    println!("✓ Git repository detected");
+    println!("{}", ui::success("Git repository detected"));
     let branch = git::current_branch()?;
-    println!("✓ On branch {branch}");
+    println!("{}", ui::success(&format!("On branch {branch}")));
 
     let staged = git::staged_files()?;
     let unstaged = git::unstaged_files()?;
@@ -65,28 +79,42 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     println!(
-        "✓ {} staged file{}",
-        staged.len(),
-        if staged.len() == 1 { "" } else { "s" }
+        "{}",
+        ui::success(&format!(
+            "{} staged file{}",
+            staged.len(),
+            if staged.len() == 1 { "" } else { "s" }
+        ))
     );
 
     let remotes = git::remotes()?;
     for (name, _) in &remotes {
-        println!("✓ {name} remote detected");
+        println!("{}", ui::success(&format!("{name} remote detected")));
     }
 
     let repo_root = git::repository_root()?;
     let config = config::load(&repo_root)?;
     let detected_version = version::detect(&repo_root)?;
     if let Some(v) = &detected_version {
-        println!("✓ {} project detected", v.ecosystem);
+        println!(
+            "{}",
+            ui::success(&format!("{} project detected", v.ecosystem))
+        );
     }
 
     println!();
-    println!("Changes");
+    println!("{}", ui::heading("Changes"));
     println!();
     for file in &staged {
-        println!("  {} {}", file.status.marker(), file.path);
+        let marker = file.status.marker();
+        let colored = match file.status {
+            git::FileStatus::Added => console::style(marker).green(),
+            git::FileStatus::Modified => console::style(marker).yellow(),
+            git::FileStatus::Deleted => console::style(marker).red(),
+            git::FileStatus::Renamed => console::style(marker).cyan(),
+            git::FileStatus::Other => console::style(marker).dim(),
+        };
+        println!("  {colored} {}", file.path);
     }
 
     let classification = bump::classify(&staged);
@@ -122,7 +150,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
                 let suggested = change.apply(&current);
                 println!("Suggested version: {suggested} ({})", change.label());
                 println!();
-                match confirm::confirm_version(&suggested)? {
+                match confirm::confirm_version(&suggested, yes)? {
                     confirm::VersionChoice::Accept => {
                         println!("Version confirmed: {suggested}");
                     }
@@ -130,7 +158,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
                         println!("Version set to: {custom}");
                     }
                     confirm::VersionChoice::Skip => {
-                        println!("Versioning skipped.");
+                        println!("{}", ui::dim("Versioning skipped."));
                     }
                 }
             }
@@ -151,7 +179,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
     println!();
     println!("{suggested_commit}");
     println!();
-    let commit_message = confirm::confirm_commit_message(&suggested_commit.to_string())?;
+    let commit_message = confirm::confirm_commit_message(&suggested_commit.to_string(), yes)?;
     println!();
     println!("Commit message: {commit_message}");
 
@@ -162,13 +190,7 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
     println!("Current branch:");
     println!("  {branch}");
     println!();
-    println!("? Where should these changes go?");
-    println!();
-    println!("  1. {branch}");
-    println!("  2. {suggested_branch}");
-    println!("  3. Custom branch");
-    println!();
-    let target_branch = match confirm::confirm_branch_choice()? {
+    let target_branch = match confirm::confirm_branch_choice(&branch, &suggested_branch, yes)? {
         confirm::BranchChoice::Current => branch.clone(),
         confirm::BranchChoice::Suggested => suggested_branch.clone(),
         confirm::BranchChoice::Custom(name) => name,
@@ -183,27 +205,36 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
             println!();
             println!("{target_branch}");
             println!();
-            if confirm::confirm_switch_to_existing_branch()? {
+            if confirm::confirm_switch_to_existing_branch(yes)? {
                 git::switch_branch(&target_branch)?;
-                println!("✓ Switched to branch {target_branch}");
+                println!(
+                    "{}",
+                    ui::success(&format!("Switched to branch {target_branch}"))
+                );
             } else {
-                println!("Staying on current branch: {branch}");
+                println!(
+                    "{}",
+                    ui::dim(&format!("Staying on current branch: {branch}"))
+                );
             }
-        } else if confirm::confirm_create_branch(&target_branch)? {
+        } else if confirm::confirm_create_branch(&target_branch, yes)? {
             git::create_branch(&target_branch)?;
-            println!("✓ Branch created: {target_branch}");
+            println!(
+                "{}",
+                ui::success(&format!("Branch created: {target_branch}"))
+            );
         } else {
-            println!("Branch not created.");
+            println!("{}", ui::dim("Branch not created."));
         }
     }
     let active_branch = git::current_branch()?;
 
     println!();
-    if confirm::confirm_commit_execution()? {
+    if confirm::confirm_commit_execution(yes)? {
         git::commit(&commit_message)?;
-        println!("✓ Changes committed");
+        println!("{}", ui::success("Changes committed"));
     } else {
-        println!("Commit skipped.");
+        println!("{}", ui::dim("Commit skipped."));
     }
 
     println!();
@@ -216,38 +247,43 @@ fn run(dry_run: bool) -> anyhow::Result<()> {
             println!("Remote:");
             println!("  {only}");
             println!();
-            confirm::confirm_use_remote(only)?.then(|| only.clone())
+            confirm::confirm_use_remote(only, yes)?.then(|| only.clone())
         } else {
-            println!("? Push to:");
-            println!();
-            for (i, name) in remote_names.iter().enumerate() {
-                println!("  {}. {name}", i + 1);
-            }
-            println!("  {}. Custom remote", remote_names.len() + 1);
-            println!();
-            Some(match confirm::confirm_remote_choice(&remote_names)? {
-                confirm::RemoteChoice::Named(name) | confirm::RemoteChoice::Custom(name) => name,
-            })
+            let default = default_remote(&remotes, config.remote.as_deref())
+                .unwrap_or(remote_names[0].as_str());
+            Some(
+                match confirm::confirm_remote_choice(&remote_names, default, yes)? {
+                    confirm::RemoteChoice::Named(name) | confirm::RemoteChoice::Custom(name) => {
+                        name
+                    }
+                },
+            )
         };
         println!();
         match &selected {
             Some(name) => println!("Remote selected: {name}"),
-            None => println!("No remote selected."),
+            None => println!("{}", ui::dim("No remote selected.")),
         }
         selected
     };
 
     if let Some(remote) = selected_remote {
         println!();
-        if confirm::confirm_push(&remote, &active_branch)? {
+        if confirm::confirm_push(&remote, &active_branch, yes)? {
             let set_upstream = !git::has_upstream(&active_branch)?;
-            git::push(&remote, &active_branch, set_upstream)?;
-            println!("✓ Pushed {remote}/{active_branch}");
+            let spinner = ui::spinner(&format!("Pushing to {remote}..."));
+            let result = git::push(&remote, &active_branch, set_upstream);
+            spinner.finish_and_clear();
+            result?;
+            println!(
+                "{}",
+                ui::success(&format!("Pushed {remote}/{active_branch}"))
+            );
             if set_upstream {
-                println!("✓ Upstream configured");
+                println!("{}", ui::success("Upstream configured"));
             }
         } else {
-            println!("Push skipped.");
+            println!("{}", ui::dim("Push skipped."));
         }
     }
 

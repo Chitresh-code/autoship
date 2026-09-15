@@ -119,8 +119,8 @@ fn dry_run_shows_the_plan_without_mutating_the_repository() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Autoship Plan"));
-    assert!(stdout.contains("Branch:"));
-    assert!(stdout.contains("Commit:"));
+    assert!(stdout.contains("Branch"));
+    assert!(stdout.contains("Commit"));
     assert!(stdout.contains("No changes were made."));
 
     // Nothing should have been committed, and the staged file should still be staged.
@@ -147,13 +147,8 @@ fn full_workflow_creates_a_branch_commits_and_pushes_with_upstream() {
     let remote = bare_remote();
     repo.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
 
-    // Accept commit message, choose the suggested (new) branch, create it, commit, use the
-    // single remote, and push.
-    let output = repo
-        .autoship()
-        .write_stdin("y\n2\ny\ny\ny\ny\n")
-        .output()
-        .unwrap();
+    // --yes accepts the suggested branch, commits, and pushes to the single remote.
+    let output = repo.autoship().arg("--yes").output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
@@ -172,8 +167,7 @@ fn missing_remote_is_reported_clearly() {
     repo.write("new.txt", "content\n");
     repo.git(&["add", "new.txt"]);
 
-    // Accept commit message, stay on the current branch, commit.
-    let output = repo.autoship().write_stdin("y\n1\ny\n").output().unwrap();
+    let output = repo.autoship().arg("--yes").output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
@@ -181,33 +175,31 @@ fn missing_remote_is_reported_clearly() {
 }
 
 #[test]
-fn multiple_remotes_prompt_with_a_numbered_list() {
+fn multiple_remotes_default_to_the_configured_preference_without_prompting() {
     let repo = TestRepo::new();
     repo.commit_initial_file();
     repo.write("new.txt", "content\n");
     repo.git(&["add", "new.txt"]);
-    repo.git(&["remote", "add", "origin", "git@example.com:user/repo.git"]);
+    let origin_remote = bare_remote();
+    let upstream_remote = bare_remote();
+    // Added out of order to prove `origin` is chosen deliberately, not just first-listed.
     repo.git(&[
         "remote",
         "add",
         "upstream",
-        "git@example.com:company/repo.git",
+        upstream_remote.to_str().unwrap(),
     ]);
+    repo.git(&["remote", "add", "origin", origin_remote.to_str().unwrap()]);
 
-    // Accept commit message, stay on the current branch, commit, pick remote 1, decline push.
-    let output = repo
-        .autoship()
-        .write_stdin("y\n1\ny\n1\nn\n")
-        .output()
-        .unwrap();
+    let output = repo.autoship().arg("--yes").output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
-    assert!(stdout.contains("? Push to:"));
-    assert!(stdout.contains("1. origin"));
-    assert!(stdout.contains("2. upstream"));
-    assert!(stdout.contains("3. Custom remote"));
-    assert!(stdout.contains("Push skipped."));
+    assert!(stdout.contains("Remote selected: origin"));
+    assert!(stdout.contains("✓ Pushed origin/"));
+
+    fs::remove_dir_all(&origin_remote).unwrap();
+    fs::remove_dir_all(&upstream_remote).unwrap();
 }
 
 #[test]
@@ -218,8 +210,7 @@ fn invalid_version_file_is_reported_without_crashing() {
     repo.write("new.txt", "content\n");
     repo.git(&["add", "VERSION", "new.txt"]);
 
-    // Accept commit message, stay on the current branch, decline commit.
-    let output = repo.autoship().write_stdin("y\n1\nn\n").output().unwrap();
+    let output = repo.autoship().arg("--yes").output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout was:\n{stdout}");
@@ -241,14 +232,25 @@ fn push_failure_is_reported_as_an_error() {
         missing_remote_path.to_str().unwrap(),
     ]);
 
-    // Accept commit message, stay on the current branch, commit, use origin, push.
-    let output = repo
-        .autoship()
-        .write_stdin("y\n1\ny\ny\ny\n")
-        .output()
-        .unwrap();
+    let output = repo.autoship().arg("--yes").output().unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Error:"));
+}
+
+#[test]
+fn without_yes_or_a_terminal_fails_clearly_instead_of_guessing() {
+    let repo = TestRepo::new();
+    repo.commit_initial_file();
+    repo.write("new.txt", "content\n");
+    repo.git(&["add", "new.txt"]);
+
+    // No --yes, and assert_cmd never attaches a real terminal: the first prompt (the commit
+    // message) must fail clearly rather than silently defaulting or hanging on stdin.
+    let output = repo.autoship().output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--yes"));
 }

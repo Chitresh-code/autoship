@@ -1,4 +1,5 @@
-use std::fmt::Write as _;
+use comfy_table::Table;
+use comfy_table::presets::UTF8_BORDERS_ONLY;
 
 /// Renders the `--dry-run` plan summary (PRD section 15).
 ///
@@ -10,26 +11,32 @@ pub fn render(
     commit: &str,
     remote: Option<&str>,
 ) -> String {
-    let mut out = String::from("Autoship Plan\n");
     let (current_branch, suggested_branch) = branch;
 
+    let mut table = Table::new();
+    table.load_style(UTF8_BORDERS_ONLY);
+    table.set_header(vec!["Field", "Value"]);
+
     if let Some((current, suggested)) = version {
-        let _ = write!(out, "\nVersion:\n  {current} \u{2192} {suggested}\n");
+        table.add_row(vec![
+            "Version".to_string(),
+            format!("{current} \u{2192} {suggested}"),
+        ]);
     }
-
-    let _ = write!(
-        out,
-        "\nBranch:\n  {current_branch} \u{2192} {suggested_branch}\n"
-    );
-    let _ = write!(out, "\nCommit:\n  {commit}\n");
-
+    table.add_row(vec![
+        "Branch".to_string(),
+        format!("{current_branch} \u{2192} {suggested_branch}"),
+    ]);
+    table.add_row(vec!["Commit".to_string(), commit.to_string()]);
     if let Some(remote) = remote {
-        let _ = write!(out, "\nRemote:\n  {remote}\n");
-        let _ = write!(out, "\nPush:\n  {remote}/{suggested_branch}\n");
+        table.add_row(vec!["Remote".to_string(), remote.to_string()]);
+        table.add_row(vec![
+            "Push".to_string(),
+            format!("{remote}/{suggested_branch}"),
+        ]);
     }
 
-    out.push_str("\nNo changes were made.\n");
-    out
+    format!("Autoship Plan\n\n{table}\n\nNo changes were made.\n")
 }
 
 #[cfg(test)]
@@ -45,37 +52,31 @@ mod tests {
             Some("origin"),
         );
 
-        assert_eq!(
-            text,
-            "Autoship Plan\n\
-             \n\
-             Version:\n  1.8.2 \u{2192} 1.9.0\n\
-             \n\
-             Branch:\n  main \u{2192} feature/oauth-login\n\
-             \n\
-             Commit:\n  feat(auth): add OAuth login\n\
-             \n\
-             Remote:\n  origin\n\
-             \n\
-             Push:\n  origin/feature/oauth-login\n\
-             \n\
-             No changes were made.\n"
-        );
+        assert!(text.starts_with("Autoship Plan\n"));
+        assert!(text.contains("Version"));
+        assert!(text.contains("1.8.2 \u{2192} 1.9.0"));
+        assert!(text.contains("Branch"));
+        assert!(text.contains("main \u{2192} feature/oauth-login"));
+        assert!(text.contains("Commit"));
+        assert!(text.contains("feat(auth): add OAuth login"));
+        assert!(text.contains("Remote"));
+        assert!(text.contains("origin"));
+        assert!(text.contains("Push"));
+        assert!(text.contains("origin/feature/oauth-login"));
+        assert!(text.ends_with("No changes were made.\n"));
     }
 
     #[test]
     fn omits_version_and_remote_sections_when_absent() {
         let text = render(None, ("main", "fix/thing"), "fix: thing", None);
 
-        assert_eq!(
-            text,
-            "Autoship Plan\n\
-             \n\
-             Branch:\n  main \u{2192} fix/thing\n\
-             \n\
-             Commit:\n  fix: thing\n\
-             \n\
-             No changes were made.\n"
-        );
+        assert!(!text.contains("Version"));
+        assert!(text.contains("Branch"));
+        assert!(text.contains("main \u{2192} fix/thing"));
+        assert!(text.contains("Commit"));
+        assert!(text.contains("fix: thing"));
+        assert!(!text.contains("Remote"));
+        assert!(!text.contains("Push"));
+        assert!(text.ends_with("No changes were made.\n"));
     }
 }
